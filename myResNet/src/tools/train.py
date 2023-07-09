@@ -43,10 +43,6 @@ def test_ResNet(device):
     )
 
     # mymodel = TestModel()
-    torchmodel = torchvision.models.resnet50(pretrained=False)
-    torchmodel.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-    torchmodel.fc = nn.Linear(512 * 4, 10)
-
     # mymodel.to('cpu')
     # optimizer = optim.Adam(
     #     params = mymodel.parameters()
@@ -57,6 +53,9 @@ def test_ResNet(device):
     # print("--------------------------")
     # print("loss:{} acc:{}".format(loss,acc))
     
+    torchmodel = torchvision.models.resnet50(pretrained=False)
+    torchmodel.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    torchmodel.fc = nn.Linear(512 * 4, 10)
     torchmodel.to('cpu')
     optimizer = optim.Adam(
         params = torchmodel.parameters()
