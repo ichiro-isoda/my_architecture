@@ -69,10 +69,12 @@ class U_decoder(nn.Module):
         self.up_layers = nn.ModuleList()
         for i in range(depth):
             self.up_layers.append(nn.ConvTranspose2d(in_ch/(2**i),in_ch,pool_size,pool_size,0))
+            #out_ch あってる？
 
         self.conv_layers = nn.ModuleList()
         for i in range(depth):
             self.conv_layers.append(conv_block(in_ch/(2**i),in_ch/(2**(i+1)),kernel_size,stride,bias,residual))
+            # ここconv2つやらないとダメじゃね？
         self.last_layer = nn.Conv2d(in_ch/(2**depth),out_ch,1,1)
 
     def forward(self,features):

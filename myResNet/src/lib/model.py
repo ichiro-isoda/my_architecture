@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-class TestModel(nn.Module):
+class ResNet(nn.Module):
     def __init__(
             self,
             in_ch=1,expansion =4
