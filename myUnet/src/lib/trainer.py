@@ -6,6 +6,7 @@ import json
 import numpy as np
 
 import torch
+from src.lib.sliding_window import sliding_window
 
 class SegTrainer():
 
@@ -21,7 +22,8 @@ class SegTrainer():
             mean_image=None,
             ndim=3,
             validation=True,
-            iter_interval=100
+            iter_interval=100,
+            test_style='sliding_window'
     ):
         self.model = model
         self.epoch = epoch
@@ -35,6 +37,7 @@ class SegTrainer():
         self.validation = validation
         self.iter_interval = iter_interval
         self.iteration = 1
+        self.test_style = test_style
 
     def training(self, iterators):
         # ======================================================================
@@ -53,14 +56,13 @@ class SegTrainer():
         res = {'TP':0, 'TN':0, 'FP':0, 'FN':0, 'loss':0}
         for epoch in range(1, self.epoch + 1):
             print('[epoch {}]'.format(epoch))
-            self.model.train()
-            traeval, train_sum_loss, res, val_eval, validation_sum_loss = self._trainer(train_iter, val_iter,epoch, res)
-            acc_admin.output_epoch_results(traeval, val_eval, train_sum_loss, validation_sum_loss, epoch)
+            traeval, train_sum_loss, res = self._trainer(train_iter, val_iter,epoch, res, acc_admin)
+            acc_admin.output_epoch_results(traeval, train_sum_loss, epoch)
 
         return acc_admin.bestScore
 
 
-    def _trainer(self, train_iter, val_iter, epoch, res):
+    def _trainer(self, train_iter, val_iter, epoch, res, acc_admin):
         # ===============================================
         #   this method is called in each epoch
         #   calc each iteration acc and loss
@@ -77,6 +79,23 @@ class SegTrainer():
         for batch in train_iter:
             x_patch, y_patch = batch
             self.optimizer.zero_grad()
+            self.model.train()
+            if self.test_type!='sliding_window':
+                shrink = 2**self.model.depth
+                if self.ndim == 3:
+                    ch, z, y, x = x_patch.shape
+                    z_pd = 0 if z%shrink == 0 else shrink-z%shrink
+                    y_pd = 0 if y%shrink == 0 else shrink-y%shrink
+                    x_pd = 0 if x%shrink == 0 else shrink-x%shrink
+                    x_patch = torch.tensor(np.expand_dims(np.expand_dims(np.pad(x_patch[0],((z_pd,0),(y_pd,0),(x_pd,0)),mode='edge'),0),0))
+                    y_patch = torch.tensor(np.expand_dims(np.pad(y_patch[0],((z_pd,0),(y_pd,0),(x_pd,0)),mode='edge'),0))
+                else:
+                    ch, y, x = x_patch.shape
+		    y_pd = 0 if y%shrink == 0 else shrink-y%shrink
+		    x_pd = 0 if x%shrink == 0 else shrink-x%shrink
+		    x_patch = torch.tensor(np.expand_dims(np.expand_dims(np.pad(x_patch[0],((y_pd,0),(x_pd,0)),mode='edge'),0),0))
+		    y_patch = torch.tensor(np.expand_dims(np.pad(y_patch[0],((y_pd,0),(x_pd,0)),mode='edge'),0))
+                    
             s_loss, s_output = self.model(x=x_patch.to(torch.device(self.gpu)), t=y_patch.to(torch.device(self.gpu)))
             s_loss.backward()
             self.optimizer.step()
@@ -86,13 +105,21 @@ class SegTrainer():
             y_patch = y_patch.to(torch.device('cpu')).numpy()[0]
             s_output = s_output.to(torch.device('cpu')).numpy()
             #make pred (0 : background, 1 : object)
-            pred = copy.deepcopy((0 < (s_output[0][1] - s_output[0][0])) * 1)
-            countListPos = copy.deepcopy(pred.astype(np.int16) + y_patch.astype(np.int16))
-            countListNeg = copy.deepcopy(pred.astype(np.int16) - y_patch.astype(np.int16))
-            TP += len(np.where(countListPos.reshape(countListPos.size)==2)[0])
-            TN += len(np.where(countListPos.reshape(countListPos.size)==0)[0])
-            FP += len(np.where(countListNeg.reshape(countListNeg.size)==1)[0])
-            FN += len(np.where(countListNeg.reshape(countListNeg.size)==-1)[0])
+            pred = [copy.deepcopy((0 < (s_output[b][1] - s_output[b][0])) * 1) for b in range(self.batchsize)]
+            if self.test_type !='sliding_window':
+                if self.ndim==2:
+                    pred = pred[:,y_pd:,x_pd:]
+                    y_patch = y_patch[:,y_pd:, x_pd:]
+                else:
+                    pred = pred[:, z_pd:, y_pd:, x_pd:]
+                    y_patch = y_patch[:, z_pd:, x_pd:]
+            for b in range(self.batchsize):
+                countListPos = copy.deepcopy(pred[b].astype(np.int16) + y_patch[b].astype(np.int16))
+                countListNeg = copy.deepcopy(pred[b].astype(np.int16) - y_patch[b].astype(np.int16))
+                TP += len(np.where(countListPos.reshape(countListPos.size)==2)[0])
+                TN += len(np.where(countListPos.reshape(countListPos.size)==0)[0])
+                FP += len(np.where(countListNeg.reshape(countListNeg.size)==1)[0])
+                FN += len(np.where(countListNeg.reshape(countListNeg.size)==-1)[0])
 
             if self.iteration % self.iter_interval == 0:
                 # calc TPs after last evaluation (pre should be last evaluated TPs)
@@ -110,8 +137,12 @@ class SegTrainer():
                 if self.validation:
                     self.model.eval()
                     val_eval, validation_sum_loss = self._validator(val_iter)
-                    # validation loss の処理の検討が必要　1epochの間にたくさん出てくる
+                    val_result = acc_admin.output_validation(val_eval, validation_sum_loss)
                     # 精度が更新されたらモデルを保存
+                    if val_result == 1:
+                        model_name = 'bestIoU.npz'
+                        torch.save(self.model.to('cpu'), os.path.join(self.opbase, model_name))
+                        self.model.to(torch.device(self.gpu))
 
                 else:
                     torch.save(self.model.to('cpu'), os.path.join(self.opbase, 'trained_models', model_name))
@@ -132,7 +163,7 @@ class SegTrainer():
 
         # return evals and TPs which still unevaluated
         res = {'TP': TP - TP_pre, 'TN': TN - TN_pre, 'FP': FP - FP_pre, 'FN': FN - FN_pre, 'loss': sum_loss - sum_loss_pre}
-        return evals, epoch_loss, res, val_eval, validation_sum_loss
+        return evals, epoch_loss, res
 
 
     def _validator(self, dataset_iter):
@@ -144,75 +175,24 @@ class SegTrainer():
         for batch in dataset_iter:
             num += 1
             x_batch, y_batch = batch
-            if self.ndim == 2:
-                im_size = x_batch.shape[1:]
-                stride = [int(self.patchsize[0]/2), int(self.patchsize[1]/2)]
-                sh = [int(stride[0]/2), int(stride[1]/2)]
-            elif self.ndim == 3:
-                im_size = x_batch.shape[1:]
-                stride = [int(self.patchsize[0]/2), int(self.patchsize[1]/2), int(self.patchsize[2]/2)]
-                sh = [int(stride[0]/2), int(stride[1]/2), int(stride[2]/2)]
+            if self.test_style=='sliding_window':
+                loss, pred = sliding_window(x_batch, y_batch)
+                pred = np.expand_dims(pred,0)
 
-            ''' calculation for pad size'''
-            if np.min(self.patchsize) > np.max(im_size):
-                if self.ndim == 2:
-                    pad_size = [self.patchsize[0], self.patchsize[1]]
-                elif self.ndim == 3:
-                    pad_size = [self.patchsize[0], self.patchsize[1], self.patchsize[2]]
             else:
-                pad_size = []
-                for axis in range(len(im_size)):
-                    if (im_size[axis] + 2*sh[axis] - self.patchsize[axis]) % stride[axis] == 0:
-                        stride_num = (im_size[axis] + 2*sh[axis] - self.patchsize[axis]) / stride[axis]
-                    else:
-                        stride_num = (im_size[axis] + 2*sh[axis] - self.patchsize[axis]) / stride[axis] + 1
-                    pad_size.append(int(stride[axis] * stride_num + self.patchsize[axis]))
-
-            gt = copy.deepcopy(y_batch)
-            pre_img = np.zeros(pad_size)
-
-            if self.ndim == 2:
-                x_batch = mirror_extension_image(image=x_batch, ndim=self.ndim, length=int(np.max(self.patchsize)))[:, self.patchsize[0]-sh[0]:self.patchsize[0]-sh[0]+pad_size[0], self.patchsize[1]-sh[1]:self.patchsize[1]-sh[1]+pad_size[1]]
-                y_batch = mirror_extension_image(image=y_batch, ndim=self.ndim,  length=int(np.max(self.patchsize)))[:, self.patchsize[0]-sh[0]:self.patchsize[0]-sh[0]+pad_size[0], self.patchsize[1]-sh[1]:self.patchsize[1]-sh[1]+pad_size[1]]
-                for y in range(0, pad_size[0]-self.patchsize[0], stride[0]):
-                    for x in range(0, pad_size[1]-self.patchsize[1], stride[1]):
-                        x_patch = torch.Tensor(x_batch[:, y:y+self.patchsize[0], x:x+self.patchsize[1]])
-                        x_patch = x_patch.reshape(1,x_patch.shape[0],x_patch.shape[1],x_patch.shape[2])
-                        y_patch = torch.Tensor(y_batch[:, y:y+self.patchsize[0], x:x+self.patchsize[1]])
-                        s_loss, s_output = self.model(x=x_patch.to(torch.device(self.gpu)), t=y_patch.to(torch.device(self.gpu)), seg=False)
-                        sum_loss += float(s_loss.to(torch.device('cpu')) * self.batchsize)
-                        s_output = s_output.to(torch.device('cpu')).numpy()
-                        pred = copy.deepcopy((0 < (s_output[0][1] - s_output[0][0])) * 255)
-                        # Add segmentation image
-                        pre_img[y:y+stride[0], x:x+stride[1]] += pred[sh[0]:-sh[0], sh[1]:-sh[1]]
-                seg_img = (pre_img > 0) * 1
-                seg_img = seg_img[:im_size[0], :im_size[1]]
-            elif self.ndim == 3:
-                x_batch = mirror_extension_image(image=x_batch, ndim=self.ndim, length=int(np.max(self.patchsize)))[:, self.patchsize[0]-sh[0]:self.patchsize[0]-sh[0]+pad_size[0], self.patchsize[1]-sh[1]:self.patchsize[1]-sh[1]+pad_size[1], self.patchsize[2]-sh[2]:self.patchsize[2]-sh[2]+pad_size[2]]
-                y_batch = mirror_extension_image(image=y_batch, ndim=self.ndim, length=int(np.max(self.patchsize)))[:, self.patchsize[0]-sh[0]:self.patchsize[0]-sh[0]+pad_size[0], self.patchsize[1]-sh[1]:self.patchsize[1]-sh[1]+pad_size[1], self.patchsize[2]-sh[2]:self.patchsize[2]-sh[2]+pad_size[2]]
-                for z in range(0, pad_size[0]-self.patchsize[0], stride[0]):
-                    for y in range(0, pad_size[1]-self.patchsize[1], stride[1]):
-                        for x in range(0, pad_size[2]-self.patchsize[2], stride[2]):
-                            x_patch = torch.Tensor(np.expand_dims(x_batch[:, z:z+self.patchsize[0], y:y+self.patchsize[1], x:x+self.patchsize[2]], axis=0))
-                            y_patch = torch.Tensor(y_batch[:, z:z+self.patchsize[0], y:y+self.patchsize[1], x:x+self.patchsize[2]])
-                            s_loss, s_output = self.model(x=x_patch.to(torch.device(self.gpu)), t=y_patch.to(torch.device(self.gpu)), seg=False)
-                            sum_loss += float(s_loss.to(torch.device('cpu')) * self.batchsize)
-                            s_output = s_output.to(torch.device('cpu')).numpy()
-                            pred = copy.deepcopy((0 < (s_output[0][1] - s_output[0][0])) * 255)
-                            # Add segmentation image
-                            pre_img[z:z+stride[0], y:y+stride[1], x:x+stride[2]] += pred[sh[0]:-sh[0], sh[1]:-sh[1], sh[2]:-sh[2]]
-                seg_img = (pre_img > 0) * 1
-                seg_img = seg_img[:im_size[0], :im_size[1], :im_size[2]]
-            gt = gt[0].numpy()
+                loss, s_output = self.model(x_batch,y_batch)
+                pred = copy.deepcopy((0 < (s_output[0][1] - s_output[0][0])) * 1)
+                gt = y_batch.numpy()
             # io.imsave('{}/segimg{}_validation.tif'.format(self.opbase, num), np.array(seg_img * 255).astype(np.uint8))
             # io.imsave('{}/gtimg{}_validation.tif'.format(self.opbase, num), np.array(gt * 255).astype(np.uint8))
-            countListPos = copy.deepcopy(seg_img.astype(np.int16) + gt.astype(np.int16))
-            countListNeg = copy.deepcopy(seg_img.astype(np.int16) - gt.astype(np.int16))
-            TP += len(np.where(countListPos.reshape(countListPos.size)==2)[0])
-            TN += len(np.where(countListPos.reshape(countListPos.size)==0)[0])
-            FP += len(np.where(countListNeg.reshape(countListNeg.size)==1)[0])
-            FN += len(np.where(countListNeg.reshape(countListNeg.size)==-1)[0])
-
+            for b in self.batchsize:
+                countListPos = copy.deepcopy(pred[b].astype(np.int16) + gt[b].astype(np.int16))
+                countListNeg = copy.deepcopy(pred[b].astype(np.int16) - gt[b].astype(np.int16))
+                TP += len(np.where(countListPos.reshape(countListPos.size)==2)[0])
+                TN += len(np.where(countListPos.reshape(countListPos.size)==0)[0])
+                FP += len(np.where(countListNeg.reshape(countListNeg.size)==1)[0])
+                FN += len(np.where(countListNeg.reshape(countListNeg.size)==-1)[0])
+            sum_loss+=loss
         evals = self._evaluator(TP, TN, FP, FN)
         print("validation phase finished")
         return evals, sum_loss
@@ -263,15 +243,11 @@ class Acc_Administrator():
         self.N_validation=N_validation
         self.opbase=opbase
 
-    def output_epoch_results(self,traeval, val_eval,train_sum_loss,validation_sum_loss,epoch):
+    def output_epoch_results(self,traeval, train_sum_loss,epoch):
         print('train mean loss={}'.format(train_sum_loss / (self.N_train * self.batchsize)))
         print('train accuracy={}, train recall={}'.format(traeval['Accuracy'], traeval['Recall']))
         print('train precision={}, specificity={}'.format(traeval['Precision'], traeval['Specificity']))
         print('train F-measure={}, IoU={}'.format(traeval['F-measure'], traeval['IoU']))
-        print('validation mean loss={}'.format(validation_sum_loss / (self.N_validation * self.batchsize)))
-        print('validation accuracy={}, recall={}'.format(val_eval['Accuracy'], val_eval['Recall']))
-        print('validation precision={}, specificity={}'.format(val_eval['Precision'], val_eval['Specificity']))
-        print('validation F-measure={}, IoU={}'.format(val_eval['F-measure'], val_eval['IoU']))
         with open(self.opbase + '/result.txt', 'a') as f:
             f.write('========================================\n')
             f.write('[epoch' + str(epoch) + ']\n')
@@ -279,39 +255,9 @@ class Acc_Administrator():
             f.write('train accuracy={}, train recall={}\n'.format(traeval['Accuracy'], traeval['Recall']))
             f.write('train precision={}, specificity={}\n'.format(traeval['Precision'], traeval['Specificity']))
             f.write('train F-measure={}, IoU={}\n'.format(traeval['F-measure'], traeval['IoU']))
-            if epoch % self.val_epoch == 0:
-                f.write('validation mean loss={}\n'.format(validation_sum_loss / (self.N_validation * self.batchsize)))
-                f.write('validation accuracy={}, recall={}\n'.format(val_eval['Accuracy'], val_eval['Recall']))
-                f.write('validation precision={}, specificity={}\n'.format(val_eval['Precision'], val_eval['Specificity']))
-                f.write('validation F-measure={}, IoU={}\n'.format(val_eval['F-measure'], val_eval['IoU']))
         with open(self.opbase + '/TrainResult.csv', 'a') as f:
             c = csv.writer(f)
             c.writerow([epoch, traeval['Accuracy'], traeval['Recall'], traeval['Precision'], traeval['Specificity'], traeval['F-measure'], traeval['IoU']])
-        with open(self.opbase + '/ValResult.csv', 'a') as f:
-            c = csv.writer(f)
-            c.writerow([epoch, val_eval['Accuracy'], val_eval['Recall'], val_eval['Precision'], val_eval['Specificity'], val_eval['F-measure'], val_eval['IoU']])
-
-        if self.bestAccuracy <= val_eval['Accuracy']:
-            self.bestAccuracy = val_eval['Accuracy']
-        if self.bestRecall <= val_eval['Recall']:
-            self.bestRecall = val_eval['Recall']
-        if self.bestPrecision <= val_eval['Precision']:
-            self.bestPrecision = val_eval['Precision']
-        if self.bestSpecificity <= val_eval['Specificity']:
-            self.bestSpecificity = val_eval['Specificity']
-        if self.bestFmeasure <= val_eval['F-measure']:
-            self.bestFmeasure = val_eval['F-measure']
-        if self.bestIoU <= val_eval['IoU']:
-            self.bestIoU = val_eval['IoU']
-            self.bestEpoch = epoch
-            # Save Model
-            if epoch > 0:
-                # epoch単位でのvalidationにおけるbestしか取ってこれない。誤解生むしこのmodel保存する必要ある？
-                model_name = 'bestIoU.npz'
-                torch.save(self.model.to('cpu'), os.path.join(self.opbase, model_name))
-                self.model.to(torch.device(self.gpu))
-            else:
-                self.bestIoU = 0.0
 
         self.bestScore = [self.bestAccuracy, self.bestRecall, self.bestPrecision, self.bestSpecificity, self.bestFmeasure, self.bestIoU]
         print('========================================')
@@ -330,3 +276,34 @@ class Acc_Administrator():
             f.write('BestIoU={}, BestEpoch={}\n'.format(self.bestIoU, self.bestEpoch))
             f.write('################################################\n')
 
+
+    def output_validation(self, val_eval, validation_sum_loss):
+        print('validation mean loss={}'.format(validation_sum_loss / (self.N_validation * self.batchsize)))
+        print('validation accuracy={}, recall={}'.format(val_eval['Accuracy'], val_eval['Recall']))
+        print('validation precision={}, specificity={}'.format(val_eval['Precision'], val_eval['Specificity']))
+        print('validation F-measure={}, IoU={}'.format(val_eval['F-measure'], val_eval['IoU']))
+        with open(self.opbase + '/result.txt', 'a') as f:
+            if epoch % self.val_epoch == 0:
+                f.write('validation mean loss={}\n'.format(validation_sum_loss / (self.N_validation * self.batchsize)))
+                f.write('validation accuracy={}, recall={}\n'.format(val_eval['Accuracy'], val_eval['Recall']))
+                f.write('validation precision={}, specificity={}\n'.format(val_eval['Precision'], val_eval['Specificity']))
+                f.write('validation F-measure={}, IoU={}\n'.format(val_eval['F-measure'], val_eval['IoU']))
+        with open(self.opbase + '/ValResult.csv', 'a') as f:
+            c = csv.writer(f)
+            c.writerow([epoch, val_eval['Accuracy'], val_eval['Recall'], val_eval['Precision'], val_eval['Specificity'], val_eval['F-measure'], val_eval['IoU']])
+        if self.bestAccuracy <= val_eval['Accuracy']:
+            self.bestAccuracy = val_eval['Accuracy']
+        if self.bestRecall <= val_eval['Recall']:
+            self.bestRecall = val_eval['Recall']
+        if self.bestPrecision <= val_eval['Precision']:
+            self.bestPrecision = val_eval['Precision']
+        if self.bestSpecificity <= val_eval['Specificity']:
+            self.bestSpecificity = val_eval['Specificity']
+        if self.bestFmeasure <= val_eval['F-measure']:
+            self.bestFmeasure = val_eval['F-measure']
+        if self.bestIoU <= val_eval['IoU']:
+            self.bestIoU = val_eval['IoU']
+            self.bestEpoch = epoch
+            return 1 # Save Model
+        else:
+            return 0

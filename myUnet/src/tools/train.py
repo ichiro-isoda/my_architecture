@@ -8,6 +8,7 @@ import random
 from torch.utils.data import DataLoader
 
 sys.path.append(os.pardir)
+sys.path.append(os.getcwd())
 from utils.parser import create_dataset_parser, create_model_parser, create_runtime_parser
 from utils.utils import config_read, get_model, createOpbase
 from utils.optimizer import set_optimizer
