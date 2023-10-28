@@ -10,8 +10,15 @@ def sliding_window(x_batch,t,ndim,patchsize,model,gpu,resolution,loss=True):
     #================================
     #   calc stride and margin(sh)
     #================================
-
-    ip_size = x_batch.shape
+    if ndim == len(x_batch.shape):
+        ch=1
+        ip_size = x_batch.shape
+    elif ndim+1 == len(x_batch.shape):
+        ch = x_batch.shape[0]
+        ip_size = x_batch.shape[1:]
+    elif ndim+2 == len(x_batch.shape):
+        ch = x_batch.shape[1]
+        ip_size = x_batch.shape[2:]
     stride = [int(psize/2) for psize in patchsize]
     sh = [int(st/2) for st in stride]
 
@@ -35,33 +42,31 @@ def sliding_window(x_batch,t,ndim,patchsize,model,gpu,resolution,loss=True):
         x_batch = mirror_extension_image(image=x_batch, ndim=ndim, length=int(np.max(patchsize)))[patchsize[0]-sh[0]:patchsize[0]-sh[0]+pad_size[0], patchsize[1]-sh[1]:patchsize[1]-sh[1]+pad_size[1]]
         for y in range(0, pad_size[0]-stride[0], stride[0]):
             for x in range(0, pad_size[1]-stride[1], stride[1]):
-                x_patch = torch.Tensor(np.expand_dims(x_batch[y:y+patchsize[0], x:x+patchsize[1]],0)) # add ch
-                x_patch = torch.unsqueeze(x_patch, dim=0)  # add batch
+                x_patch = torch.Tensor(x_batch[y:y+patchsize[0], x:x+patchsize[1]].reshape(1, ch, patchsize[1], patchsize[0])) 
                 s_output = model(x=x_patch.to(gpu), t=None, seg=False)
                 s_output = s_output.to('cpu').detach().numpy()
                 pred = ((s_output[0][1] - s_output[0][0]) > 0) * 1
                 # Add segmentation image
                 pre_img[y:y+stride[0], x:x+stride[1]] += pred[sh[0]:-sh[0], sh[1]:-sh[1]]
     
-        pred_img = pred_img[:ip_size[0], :ip_size[1]]
+        pred_img = pre_img[:ip_size[0], :ip_size[1]]
         
     elif ndim == 3:
         x_batch = mirror_extension_image(image=x_batch, ndim=ndim, length=int(np.max(patchsize)))[patchsize[0]-sh[0]:patchsize[0]-sh[0]+pad_size[0], patchsize[1]-sh[1]:patchsize[1]-sh[1]+pad_size[1], patchsize[2]-sh[2]:patchsize[2]-sh[2]+pad_size[2]]
         for z in range(0, pad_size[0]-stride[0], stride[0]):
             for y in range(0, pad_size[1]-stride[1], stride[1]):
                 for x in range(0, pad_size[2]-stride[2], stride[2]):
-                    x_patch = torch.Tensor(np.expand_dims(np.expand_dims(x_batch[z:z+patchsize[0], y:y+patchsize[1], x:x+patchsize[2]].astype(np.float32), axis=0),0)) # add ch
-                    #x_patch = torch.unsqueeze(x_patch, dim=0)  # add batch
+                    x_patch = torch.Tensor(x_batch[z:z+patchsize[0], y:y+patchsize[1], x:x+patchsize[2]].reshape(1, ch, patchsize[0], patchsize[1], patchsize[2]))
                     s_output = model(x=x_patch.to(gpu), t=None ,seg=False)
                     s_output = s_output.to('cpu').detach().numpy()
                     pred = ((s_output[0][1] - s_output[0][0]) > 0) * 1
                     # Add segmentation image
                     pre_img[z:z+stride[0], y:y+stride[1], x:x+stride[2]] += pred[sh[0]:-sh[0], sh[1]:-sh[1], sh[2]:-sh[2]]
                     
-        pred_img = pred_img[0:ip_size[0], 0:ip_size[1], 0:ip_size[2]]
+        pred_img = pre_img[0:ip_size[0], 0:ip_size[1], 0:ip_size[2]]
 
-    if loss: 
-        l = nn.functional.binary_cross_entropy(pred_img, t)
+    if loss:
+        l = nn.functional.binary_cross_entropy(torch.tensor(pred_img), t.double())
         pred_img = (pred_img > 0.5) * 1
         return l, pred_img
     else:

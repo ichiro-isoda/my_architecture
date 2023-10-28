@@ -74,7 +74,7 @@ def main():
         model=model, optimizer=optimizer,
         epoch=args.epoch, patchsize=eval(args.patch_size), batchsize=args.batchsize,
         gpu=args.gpu, opbase=opbase, ndim=args.ndim,
-        validation=args.validation, iter_interval=100, test_style='sliding_window'
+        validation=args.validation, resolution=eval(args.resolution),iter_interval=args.iter_interval, test_style=args.test_style
     )
 
     start_time = time.time()

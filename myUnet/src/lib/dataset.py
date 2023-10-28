@@ -5,6 +5,7 @@ import numpy as np
 import sys
 import os
 import random
+import torch
 
 def get_dataset(args):
     train_dataset = PreprocessedDataset(
@@ -94,7 +95,7 @@ class PreprocessedDataset(Dataset):
         if self.ndim==2:
             if len(image.shape) == 3:
                 image = image.reshape(image.shape[1],image.shape[2])
-            ip_size = (int(image.shape[0] * self.resolution[1]), int(image.shape[1] * self.resolution[1]))
+            ip_size = (int(image.shape[0] * self.resolution[1]), int(image.shape[1] * self.resolution[0]))
         elif self.ndim==3:
             if len(image.shape) == 4:
                 image = image.reshape(image.shape[1], image.shape[2], image.shape[3])
@@ -119,7 +120,10 @@ class PreprocessedDataset(Dataset):
         #  method for reading gt img 
         # ==========================
         label = io.imread(os.path.join(self.gt_path,self.img_path[i]))
-        ip_size = (int(label.shape[0] * self.resolution[2]), int(label.shape[1] * self.resolution[1]), int(label.shape[2] * self.resolution[0]))
+        if self.ndim==3:
+            ip_size = (int(label.shape[0] * self.resolution[2]), int(label.shape[1] * self.resolution[1]), int(label.shape[2] * self.resolution[0]))
+        elif self.ndim ==2:
+            ip_size = (int(label.shape[0] * self.resolution[1]), int(label.shape[1] * self.resolution[0]))
         label = (tr.resize(label, ip_size, order=1, preserve_range=True) > 0) * 1
         if self.test_style=='sliding_window':
             pad_size = np.max(np.array(self.crop_size) - np.array(ip_size))
@@ -153,9 +157,8 @@ class PreprocessedDataset(Dataset):
         
         aug_flag = random.randint(0, 3)
         if self.ndim == 3:
-            for z in range(image.shape[0]):
-                image[z] = np.rot90(image[z], k=aug_flag)
-                label[z] = np.rot90(label[z], k=aug_flag)
+            image = np.array([np.rot90(image[z], k=aug_flag) for z in range(image.shape[0])])
+            label = np.array([np.rot90(label[z], k=aug_flag) for z in range(image.shape[0])])
         elif self.ndim==2:
             image = np.rot90(image, k=aug_flag)
             label = np.rot90(label, k=aug_flag)

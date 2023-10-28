@@ -22,6 +22,7 @@ class SegTrainer():
             mean_image=None,
             ndim=3,
             validation=True,
+            resolution=(0.8,0.8,2.18),
             iter_interval=100,
             test_style='sliding_window'
     ):
@@ -35,6 +36,7 @@ class SegTrainer():
         self.optimizer = optimizer
         self.ndim = ndim
         self.validation = validation
+        self.resolution = resolution
         self.iter_interval = iter_interval
         self.iteration = 1
         self.test_style = test_style
@@ -58,6 +60,21 @@ class SegTrainer():
             print('[epoch {}]'.format(epoch))
             traeval, train_sum_loss, res = self._trainer(train_iter, val_iter,epoch, res, acc_admin)
             acc_admin.output_epoch_results(traeval, train_sum_loss, epoch)
+        print('========================================')
+        print('Best Epoch : ' + str(acc_admin.bestEpoch))
+        print('Best Accuracy : ' + str(acc_admin.bestAccuracy))
+        print('Best Recall : ' + str(acc_admin.bestRecall))
+        print('Best Precision : ' + str(acc_admin.bestPrecision))
+        print('Best Specificity : ' + str(acc_admin.bestSpecificity))
+        print('Best F-measure : ' + str(acc_admin.bestFmeasure))
+        print('Best IoU : ' + str(acc_admin.bestIoU))
+        with open(acc_admin.opbase + '/result.txt', 'a') as f:
+            f.write('################################################\n')
+            f.write('BestAccuracy={}\n'.format(acc_admin.bestAccuracy))
+            f.write('BestRecall={}, BestPrecision={}\n'.format(acc_admin.bestRecall, acc_admin.bestPrecision))
+            f.write('BestSpecificity={}, BestFmesure={}\n'.format(acc_admin.bestSpecificity, acc_admin.bestFmeasure))
+            f.write('BestIoU={}, BestEpoch={}\n'.format(acc_admin.bestIoU, acc_admin.bestEpoch))
+            f.write('################################################\n')
 
         return acc_admin.bestScore
 
@@ -106,7 +123,7 @@ class SegTrainer():
             s_output = s_output.numpy()
             #make pred (0 : background, 1 : object)
             pred = [copy.deepcopy((0 < (s_output[b][1] - s_output[b][0])) * 1) for b in range(self.batchsize)]
-            if self.test_type != 'sliding_window':
+            if self.test_style != 'sliding_window':
                 if self.ndim==2:
                     pred = pred[:,y_pd:,x_pd:]
                     y_patch = y_patch[:,y_pd:, x_pd:]
@@ -176,7 +193,7 @@ class SegTrainer():
             num += 1
             x_batch, y_batch = batch
             if self.test_style=='sliding_window':
-                loss, pred = sliding_window(x_batch,y_batch,self.ndim,self.patchsize,self.model,self.gpu,self.resolution,loss=True)
+                loss, pred = sliding_window(x_batch[0],y_batch[0], self.ndim, self.patchsize, self.model, self.gpu, self.resolution,loss=True)
                 pred = np.expand_dims(pred,0)
 
             else:
@@ -205,7 +222,7 @@ class SegTrainer():
             gt = y_batch.numpy()
             # io.imsave('{}/segimg{}_validation.tif'.format(self.opbase, num), np.array(seg_img * 255).astype(np.uint8))
             # io.imsave('{}/gtimg{}_validation.tif'.format(self.opbase, num), np.array(gt * 255).astype(np.uint8))
-            for b in self.batchsize:
+            for b in range(pred.shape[0]):
                 countListPos = copy.deepcopy(pred[b].astype(np.int16) + gt[b].astype(np.int16))
                 countListNeg = copy.deepcopy(pred[b].astype(np.int16) - gt[b].astype(np.int16))
                 TP += len(np.where(countListPos.reshape(countListPos.size)==2)[0])
@@ -280,22 +297,6 @@ class Acc_Administrator():
             c.writerow([epoch, traeval['Accuracy'], traeval['Recall'], traeval['Precision'], traeval['Specificity'], traeval['F-measure'], traeval['IoU']])
 
         self.bestScore = [self.bestAccuracy, self.bestRecall, self.bestPrecision, self.bestSpecificity, self.bestFmeasure, self.bestIoU]
-        print('========================================')
-        print('Best Epoch : ' + str(self.bestEpoch))
-        print('Best Accuracy : ' + str(self.bestAccuracy))
-        print('Best Recall : ' + str(self.bestRecall))
-        print('Best Precision : ' + str(self.bestPrecision))
-        print('Best Specificity : ' + str(self.bestSpecificity))
-        print('Best F-measure : ' + str(self.bestFmeasure))
-        print('Best IoU : ' + str(self.bestIoU))
-        with open(self.opbase + '/result.txt', 'a') as f:
-            f.write('################################################\n')
-            f.write('BestAccuracy={}\n'.format(self.bestAccuracy))
-            f.write('BestRecall={}, BestPrecision={}\n'.format(self.bestRecall, self.bestPrecision))
-            f.write('BestSpecificity={}, BestFmesure={}\n'.format(self.bestSpecificity, self.bestFmeasure))
-            f.write('BestIoU={}, BestEpoch={}\n'.format(self.bestIoU, self.bestEpoch))
-            f.write('################################################\n')
-
 
     def output_validation(self, val_eval, validation_sum_loss):
         print('validation mean loss={}'.format(validation_sum_loss / (self.N_validation * self.batchsize)))
