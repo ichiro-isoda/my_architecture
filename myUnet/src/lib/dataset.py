@@ -91,7 +91,7 @@ class PreprocessedDataset(Dataset):
         # =================================================
         #  method for reading and preprocessing raw image
         # =================================================
-        image = self.read_img(os.path.join(self.root_path, 'raw', (self.img_path[i][0:-8]+ '.tif')), self.arr_type)
+        image = self.read_img(os.path.join(self.root_path, self.img_path[i]), self.arr_type)
         #image = read_img(os.path.join(self.root_path, 'raw_fl', self.img_path[i]), self.arr_type)
         if self.ndim==2:
             if len(image.shape) == 3:
@@ -130,7 +130,7 @@ class PreprocessedDataset(Dataset):
                 label = np.pad(label, pad_width=pad_size, mode='reflect')
         return label
     
-    def augmentation(image,label):
+    def augmentation(self,image,label):
         # rotation
         aug_flag = random.randint(0, 3)
         if self.ndim ==3:
@@ -141,10 +141,8 @@ class PreprocessedDataset(Dataset):
             image = np.rot90(image, k=aug_flag)
             label = np.rot90(label, k=aug_flag)
 
-        # random crop
-        
-        
         return image, label
+        # random crop
 
     def __getitem__(self, i):
         # =========================================

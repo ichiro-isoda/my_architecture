@@ -3,8 +3,9 @@ import copy
 import torch
 from src.lib.utils import mirror_extension_image
 from skimage import transform as tr
+import torch.nn as nn
 
-def sliding_window(x_batch,ndim,patchsize,model,gpu,resolution,loss=True):
+def sliding_window(x_batch,t,ndim,patchsize,model,gpu,resolution,loss=True):
     
     #================================
     #   calc stride and margin(sh)
@@ -57,7 +58,11 @@ def sliding_window(x_batch,ndim,patchsize,model,gpu,resolution,loss=True):
                     
         pred_img = pred_img[0:ip_size[0], 0:ip_size[1], 0:ip_size[2]]
 
-    if loss: l = nn.functional.binary_cross_entropy(pred_img, t)
-    pred_img = (pred_img > 0.5) * 1
-    return l, pred_img
+    if loss: 
+        l = nn.functional.binary_cross_entropy(pred_img, t)
+        pred_img = (pred_img > 0.5) * 1
+        return l, pred_img
+    else:
+        pred_img = (pred_img > 0.5)*1
+        return pred_img
 

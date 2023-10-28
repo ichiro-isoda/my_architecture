@@ -91,10 +91,10 @@ class SegTrainer():
                     y_patch = torch.tensor(np.expand_dims(np.pad(y_patch[0],((z_pd,0),(y_pd,0),(x_pd,0)),mode='edge'),0))
                 else:
                     ch, y, x = x_patch.shape
-		    y_pd = 0 if y%shrink == 0 else shrink-y%shrink
-		    x_pd = 0 if x%shrink == 0 else shrink-x%shrink
-		    x_patch = torch.tensor(np.expand_dims(np.expand_dims(np.pad(x_patch[0],((y_pd,0),(x_pd,0)),mode='edge'),0),0))
-		    y_patch = torch.tensor(np.expand_dims(np.pad(y_patch[0],((y_pd,0),(x_pd,0)),mode='edge'),0))
+                    y_pd = 0 if y%shrink == 0 else shrink-y%shrink
+                    x_pd = 0 if x%shrink == 0 else shrink-x%shrink
+                    x_patch = torch.tensor(np.expand_dims(np.expand_dims(np.pad(x_patch[0],((y_pd,0),(x_pd,0)),mode='edge'),0),0))
+                    y_patch = torch.tensor(np.expand_dims(np.pad(y_patch[0],((y_pd,0),(x_pd,0)),mode='edge'),0))
                     
             s_loss, s_output = self.model(x=x_patch.to(torch.device(self.gpu)), t=y_patch.to(torch.device(self.gpu)))
             s_loss.backward()
@@ -176,13 +176,33 @@ class SegTrainer():
             num += 1
             x_batch, y_batch = batch
             if self.test_style=='sliding_window':
-                loss, pred = sliding_window(x_batch, y_batch)
+                loss, pred = sliding_window(x_batch,y_batch,self.ndim,self.patchsize,self.model,'cuda',self.resolution,loss=True)
                 pred = np.expand_dims(pred,0)
 
             else:
+                shrink = 2**self.model.depth
+                if self.ndim == 3:
+                    ch, z, y, x = x_patch.shape
+                    z_pd = 0 if z%shrink == 0 else shrink-z%shrink
+                    y_pd = 0 if y%shrink == 0 else shrink-y%shrink
+                    x_pd = 0 if x%shrink == 0 else shrink-x%shrink
+                    x_patch = torch.tensor(np.expand_dims(np.expand_dims(np.pad(x_patch[0],((z_pd,0),(y_pd,0),(x_pd,0)),mode='edge'),0),0))
+                    y_patch = torch.tensor(np.expand_dims(np.pad(y_patch[0],((z_pd,0),(y_pd,0),(x_pd,0)),mode='edge'),0))
+                else:
+                    ch, y, x = x_patch.shape
+                    y_pd = 0 if y%shrink == 0 else shrink-y%shrink
+                    x_pd = 0 if x%shrink == 0 else shrink-x%shrink
+                    x_patch = torch.tensor(np.expand_dims(np.expand_dims(np.pad(x_patch[0],((y_pd,0),(x_pd,0)),mode='edge'),0),0))
+                    y_patch = torch.tensor(np.expand_dims(np.pad(y_patch[0],((y_pd,0),(x_pd,0)),mode='edge'),0))
                 loss, s_output = self.model(x_batch,y_batch)
                 pred = copy.deepcopy((0 < (s_output[0][1] - s_output[0][0])) * 1)
-                gt = y_batch.numpy()
+                if self.ndim==2:
+                    pred = pred[:,y_pd:,x_pd:]
+                    y_patch = y_patch[:,y_pd:, x_pd:]
+                else:
+                    pred = pred[:, z_pd:, y_pd:, x_pd:]
+                    y_patch = y_patch[:, z_pd:, x_pd:]
+            gt = y_batch.numpy()
             # io.imsave('{}/segimg{}_validation.tif'.format(self.opbase, num), np.array(seg_img * 255).astype(np.uint8))
             # io.imsave('{}/gtimg{}_validation.tif'.format(self.opbase, num), np.array(gt * 255).astype(np.uint8))
             for b in self.batchsize:

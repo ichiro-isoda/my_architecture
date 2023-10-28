@@ -5,7 +5,7 @@ import torch.nn as nn
 class U_Net(nn.Module):
     def __init__(
             self,
-            ndim
+            ndim,
             in_ch,
             mid_ch,
             out_ch,
@@ -15,10 +15,10 @@ class U_Net(nn.Module):
             bias,
             pool_size,
             residual 
-     ):
+    ):
         self.depth = depth
         self.encoder = U_encoder(ndim,in_ch,mid_ch,depth,kernel_size,stride,bias,pool_size,residual)
-        self.decoder = U_decoder(ndimmid_ch*(2**depth),out_ch,depth,kernel_size,stride,bias,pool_size,residual)
+        self.decoder = U_decoder(ndim,mid_ch*(2**depth),out_ch,depth,kernel_size,stride,bias,pool_size,residual)
 
     def forward(self,x, t, seg=True):
         features = self.encoder(x)
@@ -32,7 +32,7 @@ class U_Net(nn.Module):
 class U_encoder(nn.Module):
     def __init__(
             self,
-            ndim
+            ndim,
             in_ch,
             mid_ch,
             depth,
@@ -61,7 +61,7 @@ class U_encoder(nn.Module):
 class U_decoder(nn.Module):
     def __init__(
             self,
-            ndim
+            ndim,
             in_ch,
             out_ch,
             depth,
@@ -100,7 +100,7 @@ class U_decoder(nn.Module):
 class U_block(nn.Module):
     def __init__(
             self,
-            ndim
+            ndim,
             in_ch,
             out_ch,
             kernel_size,
@@ -110,7 +110,7 @@ class U_block(nn.Module):
             pool_size
     ):
         super().__init__()
-        self.pool =  nn.MaxPool2d(pool_size, pool_size) if ndim==1 else nn.MaxPool3d((poolsize, poolsize))
+        self.pool =  nn.MaxPool2d(pool_size, pool_size) if ndim==1 else nn.MaxPool3d((pool_size, pool_size))
         self.conv = conv_block(ndim,in_ch,out_ch,kernel_size,stride,bias,residual)
 
     def forward(self,x):
