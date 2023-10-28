@@ -74,13 +74,13 @@ class SegTrainer():
         FP = res['FP']
         FN = res['FN']
         sum_loss = res['loss']
-        TP_pre, TN_pre, FP_pre, FN_pre,sum_loss_pre = 0, 0, 0, 0
+        TP_pre, TN_pre, FP_pre, FN_pre,sum_loss_pre = 0, 0, 0, 0, 0
 
         for batch in train_iter:
             x_patch, y_patch = batch
             self.optimizer.zero_grad()
             self.model.train()
-            if self.test_type!='sliding_window':
+            if self.test_style!='sliding_window':
                 shrink = 2**self.model.depth
                 if self.ndim == 3:
                     ch, z, y, x = x_patch.shape
@@ -101,12 +101,12 @@ class SegTrainer():
             self.optimizer.step()
 
             sum_loss += float(s_loss.to(torch.device('cpu')) * self.batchsize)
-
+            del s_loss
             y_patch = y_patch.to(torch.device('cpu')).numpy()[0]
-            s_output = s_output.to(torch.device('cpu')).numpy()
+            s_output = s_output.numpy()
             #make pred (0 : background, 1 : object)
             pred = [copy.deepcopy((0 < (s_output[b][1] - s_output[b][0])) * 1) for b in range(self.batchsize)]
-            if self.test_type !='sliding_window':
+            if self.test_type != 'sliding_window':
                 if self.ndim==2:
                     pred = pred[:,y_pd:,x_pd:]
                     y_patch = y_patch[:,y_pd:, x_pd:]
@@ -176,7 +176,7 @@ class SegTrainer():
             num += 1
             x_batch, y_batch = batch
             if self.test_style=='sliding_window':
-                loss, pred = sliding_window(x_batch,y_batch,self.ndim,self.patchsize,self.model,'cuda',self.resolution,loss=True)
+                loss, pred = sliding_window(x_batch,y_batch,self.ndim,self.patchsize,self.model,self.gpu,self.resolution,loss=True)
                 pred = np.expand_dims(pred,0)
 
             else:
@@ -303,14 +303,13 @@ class Acc_Administrator():
         print('validation precision={}, specificity={}'.format(val_eval['Precision'], val_eval['Specificity']))
         print('validation F-measure={}, IoU={}'.format(val_eval['F-measure'], val_eval['IoU']))
         with open(self.opbase + '/result.txt', 'a') as f:
-            if epoch % self.val_epoch == 0:
-                f.write('validation mean loss={}\n'.format(validation_sum_loss / (self.N_validation * self.batchsize)))
-                f.write('validation accuracy={}, recall={}\n'.format(val_eval['Accuracy'], val_eval['Recall']))
-                f.write('validation precision={}, specificity={}\n'.format(val_eval['Precision'], val_eval['Specificity']))
-                f.write('validation F-measure={}, IoU={}\n'.format(val_eval['F-measure'], val_eval['IoU']))
+            f.write('validation mean loss={}\n'.format(validation_sum_loss / (self.N_validation * self.batchsize)))
+            f.write('validation accuracy={}, recall={}\n'.format(val_eval['Accuracy'], val_eval['Recall']))
+            f.write('validation precision={}, specificity={}\n'.format(val_eval['Precision'], val_eval['Specificity']))
+            f.write('validation F-measure={}, IoU={}\n'.format(val_eval['F-measure'], val_eval['IoU']))
         with open(self.opbase + '/ValResult.csv', 'a') as f:
             c = csv.writer(f)
-            c.writerow([epoch, val_eval['Accuracy'], val_eval['Recall'], val_eval['Precision'], val_eval['Specificity'], val_eval['F-measure'], val_eval['IoU']])
+            c.writerow([val_eval['Accuracy'], val_eval['Recall'], val_eval['Precision'], val_eval['Specificity'], val_eval['F-measure'], val_eval['IoU']])
         if self.bestAccuracy <= val_eval['Accuracy']:
             self.bestAccuracy = val_eval['Accuracy']
         if self.bestRecall <= val_eval['Recall']:
@@ -323,7 +322,6 @@ class Acc_Administrator():
             self.bestFmeasure = val_eval['F-measure']
         if self.bestIoU <= val_eval['IoU']:
             self.bestIoU = val_eval['IoU']
-            self.bestEpoch = epoch
             return 1 # Save Model
         else:
             return 0

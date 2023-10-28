@@ -37,8 +37,9 @@ def sliding_window(x_batch,t,ndim,patchsize,model,gpu,resolution,loss=True):
             for x in range(0, pad_size[1]-stride[1], stride[1]):
                 x_patch = torch.Tensor(np.expand_dims(x_batch[y:y+patchsize[0], x:x+patchsize[1]],0)) # add ch
                 x_patch = torch.unsqueeze(x_patch, dim=0)  # add batch
-                s_output = model(x=x_patch.to('cuda'), t=None, seg=False)
+                s_output = model(x=x_patch.to(gpu), t=None, seg=False)
                 s_output = s_output.to('cpu').detach().numpy()
+                pred = ((s_output[0][1] - s_output[0][0]) > 0) * 1
                 # Add segmentation image
                 pre_img[y:y+stride[0], x:x+stride[1]] += pred[sh[0]:-sh[0], sh[1]:-sh[1]]
     
@@ -51,8 +52,9 @@ def sliding_window(x_batch,t,ndim,patchsize,model,gpu,resolution,loss=True):
                 for x in range(0, pad_size[2]-stride[2], stride[2]):
                     x_patch = torch.Tensor(np.expand_dims(np.expand_dims(x_batch[z:z+patchsize[0], y:y+patchsize[1], x:x+patchsize[2]].astype(np.float32), axis=0),0)) # add ch
                     #x_patch = torch.unsqueeze(x_patch, dim=0)  # add batch
-                    s_output = model(x=x_patch.to('cuda'), t=None ,seg=False)
+                    s_output = model(x=x_patch.to(gpu), t=None ,seg=False)
                     s_output = s_output.to('cpu').detach().numpy()
+                    pred = ((s_output[0][1] - s_output[0][0]) > 0) * 1
                     # Add segmentation image
                     pre_img[z:z+stride[0], y:y+stride[1], x:x+stride[2]] += pred[sh[0]:-sh[0], sh[1]:-sh[1], sh[2]:-sh[2]]
                     

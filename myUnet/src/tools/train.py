@@ -6,6 +6,7 @@ import sys
 import numpy as np
 import random
 from torch.utils.data import DataLoader
+import torch.nn as nn
 
 sys.path.append(os.pardir)
 sys.path.append(os.getcwd())
@@ -22,9 +23,10 @@ def main():
     # ========================================
     ap = ArgumentParser(description='train U-Net for segmentation')
     ap.add_argument('--conf_file','-c',default='confs/example.cfg',help='Specify the config file path')
+    ap.add_argument('--gpu','-g',default='cpu')
     base_args, remaining_argv = ap.parse_known_args()
-    args = config_read(base_args.conf_file, remaining_argv, 
-                       ["Dataset","Model","Runtime"], [create_dataset_parser, create_model_parser, create_runtime_parser])
+    args = config_read(ap,base_args.conf_file, remaining_argv, 
+                       {"Dataset":create_dataset_parser, "Model":create_model_parser, "Runtime":create_runtime_parser})
     #seed
     random.seed(seed)
     np.random.seed(seed)
@@ -37,12 +39,12 @@ def main():
     train_dataset, validation_dataset = get_dataset(args)
     train_iterator = DataLoader(
         dataset=train_dataset,
-        batch_size=args.batch,
+        batch_size=args.batchsize,
         shuffle=True
     )
     validation_iterator = DataLoader(
         dataset=validation_dataset,
-        batch_size=args.batch,
+        batch_size=args.batchsize,
         shuffle=False
     )
 
@@ -52,6 +54,7 @@ def main():
         print('Load model from', args.init_model)
         model = torch.load(args.init_model)
     model = model.to(args.gpu)
+    print(model)
 
     # ==========================================================
     #    prepare file and directory for saving trained models
@@ -61,15 +64,17 @@ def main():
     psep = '/'
     print('-- train_dataset.size = {}\n-- validation_dataset.size = {}'.format(
         len(train_dataset), len(validation_dataset)))
-    print(args, file=args.savedir+'/condition.txt')
-    
+    with open(opbase + '/condition.txt', 'w') as f:
+        for k,v in zip(vars(args).keys(), vars(args).values()):
+            f.write('{} = {}\n'.format(k,v))
     # prepare optimizer
     optimizer = set_optimizer(args, model)
 
     trainer = SegTrainer(
-        model=model, optimizer=optimizer, 
-        train_data=train_iterator, test_data=validation_iterator, 
-        epoch=args.epoch, device=args.gpu, loss_func=eval(args.loss_func), validation=args.validation
+        model=model, optimizer=optimizer,
+        epoch=args.epoch, patchsize=eval(args.patch_size), batchsize=args.batchsize,
+        gpu=args.gpu, opbase=opbase, ndim=args.ndim,
+        validation=args.validation, iter_interval=100, test_style='sliding_window'
     )
 
     start_time = time.time()

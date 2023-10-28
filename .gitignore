@@ -2,3 +2,5 @@ datasets
 utils
 .history
 .DS_Store
+**pycache**
+**result**

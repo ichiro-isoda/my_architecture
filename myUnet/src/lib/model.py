@@ -10,22 +10,25 @@ class U_Net(nn.Module):
             mid_ch,
             out_ch,
             depth,
+            loss_func,
             kernel_size,
             stride,
             bias,
             pool_size,
             residual 
     ):
+        super().__init__()
         self.depth = depth
         self.encoder = U_encoder(ndim,in_ch,mid_ch,depth,kernel_size,stride,bias,pool_size,residual)
-        self.decoder = U_decoder(ndim,mid_ch*(2**depth),out_ch,depth,kernel_size,stride,bias,pool_size,residual)
+        self.decoder = U_decoder(ndim,mid_ch*(2**(depth-1)),out_ch,depth,kernel_size,stride,bias,pool_size,residual)
+        self.loss_func = eval(loss_func)
 
     def forward(self,x, t, seg=True):
         features = self.encoder(x)
         out = self.decoder(features)
         if seg:
             loss = self.loss_func(out, t)
-            return loss, out
+            return loss, out.to('cpu').detach()
         return out
 
 # Encoder part    
@@ -73,22 +76,25 @@ class U_decoder(nn.Module):
     ):
         super().__init__()
         self.up_layers = nn.ModuleList()
-        for i in range(depth):
-            if ndim == 2:self.up_layers.append(nn.ConvTranspose2d(in_ch/(2**i),in_ch/(2**(i+1)),pool_size,pool_size,0))
-            else :self.up_layers.append(nn.ConvTranspose3d(in_ch/(2**i),in_ch/(2**(i+1)),pool_size,pool_size,0))
+        for i in range(depth-1):
+            if ndim == 2:self.up_layers.append(nn.ConvTranspose2d(int(in_ch/(2**i)),int(in_ch/(2**(i+1))),pool_size,pool_size,0))
+            else :self.up_layers.append(nn.ConvTranspose3d(int(in_ch/(2**i)),int(in_ch/(2**(i+1))),pool_size,pool_size,0))
 
         self.conv_layers = nn.ModuleList()
-        for i in range(depth):
-            self.conv_layers.append(conv_block(ndim,in_ch/(2**i),in_ch/(2**(i+1)),kernel_size,stride,bias,residual))
-            self.conv_layers.append(conv_block(ndim,in_ch/(2**i+1),in_ch/(2**(i+1)),kernel_size,stride,bias,residual))
+        for i in range(depth-1):
+            self.conv_layers.append(
+                nn.Sequential(
+                conv_block(ndim,int(in_ch/(2**i)),int(in_ch/(2**(i+1))),kernel_size,stride,bias,residual),
+                conv_block(ndim,int(in_ch/(2**(i+1))),int(in_ch/(2**(i+1))),kernel_size,stride,bias,residual)
+                )
+            )
     
-        self.last_layer = nn.Conv2d(in_ch/(2**depth),out_ch,1,1) if ndim==2 else nn.Conv3d(in_ch/(2**depth))
+        self.last_layer = nn.Conv2d(int(in_ch/(2**(depth-1))),out_ch,1,1) if ndim==2 else nn.Conv3d(int(in_ch/(2**(depth-1))),out_ch,1,1)
 
     def forward(self,features):
-        features = features.transopose()
         out = features.pop()
         for l, c in zip(self.up_layers,self.conv_layers):
-            out = torch.cat(l(out), features.pop(), dim=1)
+            out = torch.cat([l(out), features.pop()], dim=1)
             out = c(out)
         return self.last_layer(out)
 
@@ -110,7 +116,7 @@ class U_block(nn.Module):
             pool_size
     ):
         super().__init__()
-        self.pool =  nn.MaxPool2d(pool_size, pool_size) if ndim==1 else nn.MaxPool3d((pool_size, pool_size))
+        self.pool =  nn.MaxPool2d(pool_size, pool_size) if ndim==1 else nn.MaxPool3d(pool_size, pool_size)
         self.conv = conv_block(ndim,in_ch,out_ch,kernel_size,stride,bias,residual)
 
     def forward(self,x):

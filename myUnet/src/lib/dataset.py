@@ -12,7 +12,6 @@ def get_dataset(args):
         gt_path=args.gt_path,
         split_list=args.split_list_train,
         train=True,
-        model=args.model,
         arr_type=args.input_format,
         augmentation=True,
         scaling=args.scaling,
@@ -25,7 +24,6 @@ def get_dataset(args):
         gt_path=args.gt_path,
         split_list=args.split_list_validation,
         train=False,
-        model=args.model,
         arr_type=args.input_format,
         augmentation=False,
         scaling=args.scaling,
@@ -69,7 +67,7 @@ class PreprocessedDataset(Dataset):
     def __len__(self):
         return len(self.img_path)
 
-    def read_img(path, arr_type='npz'):
+    def read_img(self, path, arr_type='npz'):
         """ read image array from path
         Args:
             path (str)          : path to directory which images are stored.
@@ -97,7 +95,7 @@ class PreprocessedDataset(Dataset):
             if len(image.shape) == 3:
                 image = image.reshape(image.shape[1],image.shape[2])
             ip_size = (int(image.shape[0] * self.resolution[1]), int(image.shape[1] * self.resolution[1]))
-        elif self.ndim==3 and len(image.shape)==4:
+        elif self.ndim==3:
             if len(image.shape) == 4:
                 image = image.reshape(image.shape[1], image.shape[2], image.shape[3])
             ip_size = (int(image.shape[0] * self.resolution[2]), int(image.shape[1] * self.resolution[1]), int(image.shape[2] * self.resolution[0]))
@@ -113,7 +111,7 @@ class PreprocessedDataset(Dataset):
             image = (image - image.min()) / (image.max() - image.min())
         elif self.scaling == 'z-scale':
             image = (image - image.mean()) / image.std()
-
+    
         return image.astype(np.float32)
 
     def _get_label_(self, i):
@@ -130,7 +128,7 @@ class PreprocessedDataset(Dataset):
                 label = np.pad(label, pad_width=pad_size, mode='reflect')
         return label
     
-    def augmentation(self,image,label):
+    def _augmentation_(self,image,label):
         # rotation
         aug_flag = random.randint(0, 3)
         if self.ndim ==3:
@@ -142,7 +140,56 @@ class PreprocessedDataset(Dataset):
             label = np.rot90(label, k=aug_flag)
 
         return image, label
-        # random crop
+    
+    def crop_pair(
+        self,
+        image,
+        label,
+        nonzero_image1_thr=0.000001,
+        #nonzero_image1_thr=0.0,
+        nonzero_image2_thr=0.000001,
+        #nonzero_image2_thr=0.0,
+    ):
+        
+        aug_flag = random.randint(0, 3)
+        if self.ndim == 3:
+            for z in range(image.shape[0]):
+                image[z] = np.rot90(image[z], k=aug_flag)
+                label[z] = np.rot90(label[z], k=aug_flag)
+        elif self.ndim==2:
+            image = np.rot90(image, k=aug_flag)
+            label = np.rot90(label, k=aug_flag)
+
+        if self.test_style == 'sliding_window':
+            if self.ndim ==3:
+                z_len, y_len, x_len = image.shape
+            elif self.ndim ==2:
+                y_len, x_len = image.shape
+            #_, x_len, y_len, z_len = image1.shape
+            assert x_len >= self.crop_size[0]
+            assert y_len >= self.crop_size[1]
+            if self.ndim ==3:assert z_len >= self.crop_size[2]
+            
+            while 1:
+                # get cropping position (image)
+                top = random.randint(0, x_len-self.crop_size[0]-1) if x_len > self.crop_size[0] else 0
+                left = random.randint(0, y_len-self.crop_size[1]-1) if y_len > self.crop_size[1] else 0
+                if self.ndim ==3: front = random.randint(0, z_len-self.crop_size[2]-1) if z_len > self.crop_size[2] else 0
+                bottom = top + self.crop_size[0]
+                right = left + self.crop_size[1]
+                if self.ndim == 3:rear = front + self.crop_size[2]
+
+                # crop image
+                cropped_image = image[left:right, top:bottom] if self.ndim==2 else image[front:rear, left:right, top:bottom] 
+                cropped_label = label[left:right, top:bottom] if self.ndim==2 else label[front:rear, left:right, top:bottom] 
+                # get nonzero ratio
+                nonzero_image_ratio = np.nonzero(cropped_image)[0].size / float(cropped_image.size)
+                nonzero_label_ratio = np.nonzero(cropped_label)[0].size / float(cropped_label.size)
+
+                # break loop
+                if (nonzero_image_ratio >= nonzero_image1_thr) and (nonzero_label_ratio >= nonzero_image2_thr):
+                    return cropped_image, cropped_label
+
 
     def __getitem__(self, i):
         # =========================================
@@ -155,7 +202,7 @@ class PreprocessedDataset(Dataset):
         label = self._get_label_(i)
         
         if self.train:
-            image= self.augmentation(image, label)
+            image, label = self.crop_pair(image,label)
             return np.expand_dims(image.astype(np.float32), axis=0), label
         else:
             return image.astype(np.float32), label
